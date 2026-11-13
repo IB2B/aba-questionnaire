@@ -122,15 +122,10 @@ export function QuestionnaireForm({
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
+  // Steps are free to move between — nothing is checked until Submit, so the
+  // client can skip ahead, come back, and fill things in whatever order suits
+  // them. Everything is validated in one pass at the end.
   function handleNext() {
-    if (!section) return
-    const sectionErrors = validateSection(section, answers, lang)
-
-    if (Object.keys(sectionErrors).length > 0) {
-      setErrors(sectionErrors)
-      focusFirstError(sectionErrors)
-      return
-    }
     goTo(step + 1)
   }
 

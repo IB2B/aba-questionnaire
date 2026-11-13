@@ -432,6 +432,34 @@ check("the pipeline “use yours” escape hatch is gone",
 check("the automations “use your standard setup” escape hatch is gone",
   !SECTIONS[5].questions.find((q) => q.id === "automations")!.optOut)
 
+// ------------------------------------------------- skipping ahead then submitting
+heading("Free navigation, checked once at submit")
+
+// The client can walk past any step without filling it in; Submit is the only
+// gate, and it has to catch gaps wherever they are.
+const skippedFirst = without(answers, "agency_name")
+check("a gap in step 1 is caught at submit",
+  firstInvalidSection(skippedFirst, LANG) === 0)
+
+const skippedMiddle = without(answers, "sender_email")
+check("a gap in step 4 is caught at submit",
+  firstInvalidSection(skippedMiddle, LANG) === 3)
+
+const skippedLast = without(answers, "gdpr_consent")
+check("a gap in the final step is caught at submit",
+  firstInvalidSection(skippedLast, LANG) === 6)
+
+const emptyForm = withDefaults({})
+check("an untouched form is blocked at submit",
+  firstInvalidSection(emptyForm, LANG) === 0)
+check("an untouched form reports every missing step",
+  SECTIONS.filter(
+    (s) => Object.keys(validateSection(s, emptyForm, LANG)).length > 0
+  ).length > 1)
+
+check("a fully answered form passes in one go",
+  firstInvalidSection(answers, LANG) === -1)
+
 // ------------------------------------------------------------ review + send
 heading("Review and submit")
 
