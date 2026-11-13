@@ -31,6 +31,17 @@ function without(source: AnswerMap, key: string): AnswerMap {
   return copy
 }
 
+/** Sections are addressed by id so renumbering a step cannot break a test. */
+function sec(id: string) {
+  const found = SECTIONS.find((s) => s.id === id)
+  if (!found) throw new Error(`No section "${id}"`)
+  return found
+}
+
+function secIndex(id: string): number {
+  return SECTIONS.findIndex((s) => s.id === id)
+}
+
 const TOTAL_STEPS = SECTIONS.length + 1
 const LANG: Lang = "it"
 
@@ -62,25 +73,27 @@ check("currency defaults to EUR", answers.currency === "EUR")
 check("country defaults to Italia", answers.address_country === "Italia")
 check("business phone is prefilled +39", answers.business_phone === "+39 ")
 check("WhatsApp is prefilled +39", answers.contact_whatsapp === "+39 ")
-check("VAT rate defaults to 22", answers.vat_rate === 22)
 check("SMS to US defaults to No", answers.sms_to_us === false)
 check("subdomain defaults are on", answers.use_default_subdomains === true)
 
 // ------------------------------------------------------------- progress bar
 heading("Progress bar is per step, not per field")
 
-check("step 1 of 8 reads 12%", stepPercent(0, TOTAL_STEPS) === 12,
-  `got ${stepPercent(0, TOTAL_STEPS)}`)
-check("step 4 of 8 reads 50%", stepPercent(3, TOTAL_STEPS) === 50,
-  `got ${stepPercent(3, TOTAL_STEPS)}`)
-check("step 8 of 8 reads 100%", stepPercent(7, TOTAL_STEPS) === 100,
-  `got ${stepPercent(7, TOTAL_STEPS)}`)
-check("there are 8 steps (7 sections + review)", TOTAL_STEPS === 8)
+check("the first step is a fraction, not a near-complete bar",
+  stepPercent(0, TOTAL_STEPS) === Math.floor(100 / TOTAL_STEPS),
+  `got ${stepPercent(0, TOTAL_STEPS)}%`)
+check("the review step reads 100%",
+  stepPercent(TOTAL_STEPS - 1, TOTAL_STEPS) === 100)
+check("progress only ever climbs",
+  Array.from({ length: TOTAL_STEPS }, (_, i) => stepPercent(i, TOTAL_STEPS))
+    .every((v, i, all) => i === 0 || v > all[i - 1]))
+check("there is one step per section plus the review",
+  TOTAL_STEPS === SECTIONS.length + 1)
 
 // ------------------------------------------------- step 1 blocks when empty
 heading("Step 1 blocks on empty required fields")
 
-const step1Errors = validateSection(SECTIONS[0], answers, LANG)
+const step1Errors = validateSection(sec("business"), answers, LANG)
 check("empty step 1 produces errors", Object.keys(step1Errors).length > 0,
   `${Object.keys(step1Errors).length} errors`)
 check("agency name is flagged", Boolean(step1Errors.agency_name))
@@ -95,7 +108,7 @@ check("errors are in Italian",
 heading("Italian field validation")
 
 const bad = (id: string, value: AnswerValue) =>
-  validateSection(SECTIONS[0], { ...answers, [id]: value }, LANG)[id]
+  validateSection(sec("business"), { ...answers, [id]: value }, LANG)[id]
 
 check("Partita IVA with bad checksum rejected", Boolean(bad("partita_iva", "12345678901")))
 check("Partita IVA of 10 digits rejected", Boolean(bad("partita_iva", "1234567890")))
@@ -126,7 +139,7 @@ check("bare domain rejected", Boolean(bad("website", "agenzia.it")))
 check("https:// URL accepted", !bad("website", "https://agenzia.it"))
 
 // --------------------------------------------------------- fill every step
-heading("Filling all 7 steps")
+heading("Filling every step")
 
 const filled: AnswerMap = {
   ...answers,
@@ -167,9 +180,6 @@ const filled: AnswerMap = {
   sender_email: "no-reply@milanogrowth.it",
   reply_to_email: "supporto@milanogrowth.it",
   phone_countries: ["it"],
-  // 5 — pagamenti
-  stripe_access: "invite",
-  packages: [{ name: "Starter", monthly_price: "297", setup_fee: "500" }],
   // 6 — snapshot
   has_snapshots: false,
   wants_snapshot_built: true,
@@ -195,25 +205,25 @@ SECTIONS.forEach((section, index) => {
 // ----------------------------------------------------- conditional branches
 heading("Conditional fields")
 
-const itDocs = visibleQuestions(SECTIONS[3], answers).map((q) => q.id)
+const itDocs = visibleQuestions(sec("comms"), answers).map((q) => q.id)
 check("Italian number documents shown for Italy",
   itDocs.includes("italian_number_id_doc") && itDocs.includes("italian_number_visura"))
 check("A2P fields hidden while SMS-to-US is No", !itDocs.includes("sms_ein"))
 
 const withUsSms = { ...answers, sms_to_us: true }
-const usIds = visibleQuestions(SECTIONS[3], withUsSms).map((q) => q.id)
+const usIds = visibleQuestions(sec("comms"), withUsSms).map((q) => q.id)
 check("A2P fields appear when SMS-to-US is Yes",
   ["sms_ein", "sms_authorized_name", "sms_authorized_email",
    "sms_authorized_mobile", "sms_privacy_url"].every((id) => usIds.includes(id)))
 check("turning SMS-to-US on re-blocks the step",
-  Object.keys(validateSection(SECTIONS[3], withUsSms, LANG)).length === 5)
+  Object.keys(validateSection(sec("comms"), withUsSms, LANG)).length === 5)
 
 const otherCountry = { ...answers, phone_countries: ["it", "other"] }
 check("“other countries” field appears",
-  visibleQuestions(SECTIONS[3], otherCountry).some((q) => q.id === "phone_countries_other"))
+  visibleQuestions(sec("comms"), otherCountry).some((q) => q.id === "phone_countries_other"))
 
 const customSubdomains = { ...answers, use_default_subdomains: false }
-const subIds = visibleQuestions(SECTIONS[2], customSubdomains).map((q) => q.id)
+const subIds = visibleQuestions(sec("domain"), customSubdomains).map((q) => q.id)
 check("custom subdomain fields appear",
   ["subdomain_login", "subdomain_links", "subdomain_email"].every((id) => subIds.includes(id)))
 check("they are prefilled app/link/mail",
@@ -225,15 +235,15 @@ const withSnapshots: AnswerMap = {
   ...without(without(answers, "niches"), "wants_snapshot_built"),
   has_snapshots: true,
 }
-const snapIds = visibleQuestions(SECTIONS[5], withSnapshots).map((q) => q.id)
+const snapIds = visibleQuestions(sec("snapshots"), withSnapshots).map((q) => q.id)
 check("snapshot repeater replaces the niches picker",
   snapIds.includes("snapshots") && !snapIds.includes("niches"))
 check("empty required repeater blocks the step",
-  validateSection(SECTIONS[5], withSnapshots, LANG).snapshots ===
+  validateSection(sec("snapshots"), withSnapshots, LANG).snapshots ===
     "Aggiungi almeno una riga.")
 check("a row missing its required link is flagged",
   Boolean(validateSection(
-    SECTIONS[5],
+    sec("snapshots"),
     { ...withSnapshots, snapshots: [{ niche: "Dentisti" }] },
     LANG
   ).snapshots))
@@ -241,7 +251,7 @@ check("a row missing its required link is flagged",
 // --------------------------------------------------------- dynamic choices
 heading("Dropdowns built from earlier answers")
 
-const defaultSnapshot = SECTIONS[5].questions.find((q) => q.id === "default_snapshot")!
+const defaultSnapshot = sec("snapshots").questions.find((q) => q.id === "default_snapshot")!
 const fromNiches = resolveChoices(defaultSnapshot, answers, LANG).map((c) => c.label)
 check("default snapshot lists the chosen niches",
   fromNiches.includes("Dentisti") && fromNiches.includes("Centri estetici"),
@@ -259,13 +269,13 @@ check("default snapshot lists snapshot niches instead",
 heading("GDPR consent")
 
 check("unticked GDPR consent blocks the final step",
-  validateSection(SECTIONS[6], { ...answers, gdpr_consent: false }, LANG)
+  validateSection(sec("team"), { ...answers, gdpr_consent: false }, LANG)
     .gdpr_consent === "Devi accettare per continuare.")
 check("missing GDPR consent blocks the final step",
-  Boolean(validateSection(SECTIONS[6], without(answers, "gdpr_consent"), LANG)
+  Boolean(validateSection(sec("team"), without(answers, "gdpr_consent"), LANG)
     .gdpr_consent))
 check("DPA request is optional",
-  !validateSection(SECTIONS[6], answers, LANG).wants_dpa)
+  !validateSection(sec("team"), answers, LANG).wants_dpa)
 
 
 // ------------------------------------------------------------ recent fixes
@@ -281,9 +291,9 @@ check("opt-out keys survive pruning",
   pruneAnswers(answers).menu_changes_default === true)
 
 check("registrar is now required",
-  Boolean(validateSection(SECTIONS[2], without(answers, "registrar"), LANG).registrar))
+  Boolean(validateSection(sec("domain"), without(answers, "registrar"), LANG).registrar))
 
-const dnsOwner = SECTIONS[2].questions.find((q) => q.id === "client_dns_owner")!
+const dnsOwner = sec("domain").questions.find((q) => q.id === "client_dns_owner")!
 const dnsLabels = dnsOwner.choices!.map((c) => c.label.it)
 check("DNS option 1 renamed",
   dnsLabels.includes("Li raccolgo io e ve li invio"), dnsLabels.join(" | "))
@@ -291,60 +301,38 @@ check("DNS option 2 renamed",
   dnsLabels.includes("Contattate voi direttamente i miei clienti"),
   dnsLabels.join(" | "))
 
-const noWhatsapp = visibleQuestions(SECTIONS[3], answers).map((q) => q.id)
+const noWhatsapp = visibleQuestions(sec("comms"), answers).map((q) => q.id)
 check("WhatsApp follow-ups hidden by default",
   !noWhatsapp.includes("whatsapp_number") &&
   !noWhatsapp.includes("whatsapp_business_manager"))
 
 const withWhatsapp = { ...answers, needs_whatsapp: true }
-const waIds = visibleQuestions(SECTIONS[3], withWhatsapp).map((q) => q.id)
+const waIds = visibleQuestions(sec("comms"), withWhatsapp).map((q) => q.id)
 check("Meta Business Manager question appears",
   waIds.includes("whatsapp_business_manager"))
 check("WhatsApp number question appears", waIds.includes("whatsapp_number"))
 check("both WhatsApp questions are required",
-  Object.keys(validateSection(SECTIONS[3], withWhatsapp, LANG)).length === 2)
+  Object.keys(validateSection(sec("comms"), withWhatsapp, LANG)).length === 2)
 check("“Non lo so” is an option",
-  SECTIONS[3].questions
+  sec("comms").questions
     .find((q) => q.id === "whatsapp_business_manager")!
     .choices!.some((c) => c.label.it === "Non lo so"))
 check("WhatsApp number must be international",
   Boolean(validateSection(
-    SECTIONS[3],
+    sec("comms"),
     { ...withWhatsapp, whatsapp_business_manager: "yes", whatsapp_number: "333 123 4567" },
     LANG
   ).whatsapp_number))
 check("a valid WhatsApp number clears the step",
   Object.keys(validateSection(
-    SECTIONS[3],
+    sec("comms"),
     { ...withWhatsapp, whatsapp_business_manager: "yes", whatsapp_number: "+39 333 123 4567" },
     LANG
   )).length === 0)
 check("the helper warns about reusing a number",
-  SECTIONS[3].questions
+  sec("comms").questions
     .find((q) => q.id === "whatsapp_number")!
     .help!.it.includes("non deve essere già usato"))
-
-const halfPackage = { ...answers, packages: [{ setup_fee: "500" }] }
-check("a half-filled package row demands a name",
-  Boolean(validateSection(SECTIONS[4], halfPackage, LANG).packages),
-  validateSection(SECTIONS[4], halfPackage, LANG).packages)
-check("a package with a name but no price is flagged",
-  Boolean(validateSection(
-    SECTIONS[4],
-    { ...answers, packages: [{ name: "Starter" }] },
-    LANG
-  ).packages))
-check("a completely empty package row is ignored",
-  Object.keys(validateSection(
-    SECTIONS[4],
-    { ...answers, packages: [{ name: "", monthly_price: "" }] },
-    LANG
-  )).length === 0)
-check("empty package rows are dropped before saving",
-  (pruneAnswers({
-    ...answers,
-    packages: [{ name: "Starter", monthly_price: "297" }, {}, { name: "  " }],
-  }).packages as { name?: string }[]).length === 1)
 
 const staleDraft = { agency_name: "Vecchia bozza", fonts: "Inter", timezone: "" }
 const revived = normalizeAnswers(staleDraft)
@@ -355,26 +343,28 @@ check("old draft keeps what the client typed",
   revived.agency_name === "Vecchia bozza")
 check("old draft loses the retired field", revived.fonts === undefined)
 check("a deliberate No is not overwritten by its default",
-  normalizeAnswers({ prices_include_vat: false }).prices_include_vat === false)
-check("a deliberate 0 is not overwritten by its default",
-  normalizeAnswers({ vat_rate: 0 }).vat_rate === 0)
+  normalizeAnswers({ use_default_subdomains: false })
+    .use_default_subdomains === false)
+check("a typed-over default is kept",
+  normalizeAnswers({ address_country: "Svizzera" }).address_country ===
+    "Svizzera")
 
 // ----------------------------------------------- snapshot build flow
 heading("Snapshot: do you want us to build one")
 
 const noSnapshots: AnswerMap = { ...answers, has_snapshots: false }
-const buildIds = visibleQuestions(SECTIONS[5], noSnapshots).map((q) => q.id)
+const buildIds = visibleQuestions(sec("snapshots"), noSnapshots).map((q) => q.id)
 check("“shall we build one” appears when they have none",
   buildIds.includes("wants_snapshot_built"))
 check("it is required",
   Boolean(validateSection(
-    SECTIONS[5],
+    sec("snapshots"),
     without(noSnapshots, "wants_snapshot_built"),
     LANG
   ).wants_snapshot_built))
 
 const declined: AnswerMap = { ...noSnapshots, wants_snapshot_built: false }
-const declinedIds = visibleQuestions(SECTIONS[5], declined).map((q) => q.id)
+const declinedIds = visibleQuestions(sec("snapshots"), declined).map((q) => q.id)
 check("saying no hides the brand and niches",
   !declinedIds.includes("snapshot_brand") && !declinedIds.includes("niches"))
 check("saying no hides every content question",
@@ -382,10 +372,10 @@ check("saying no hides every content question",
     (id) => !declinedIds.includes(id)
   ))
 check("saying no leaves nothing else to fill in",
-  Object.keys(validateSection(SECTIONS[5], declined, LANG)).length === 0,
-  JSON.stringify(validateSection(SECTIONS[5], declined, LANG)))
+  Object.keys(validateSection(sec("snapshots"), declined, LANG)).length === 0,
+  JSON.stringify(validateSection(sec("snapshots"), declined, LANG)))
 
-const buildingIds = visibleQuestions(SECTIONS[5], answers).map((q) => q.id)
+const buildingIds = visibleQuestions(sec("snapshots"), answers).map((q) => q.id)
 check("saying yes asks for the brand", buildingIds.includes("snapshot_brand"))
 check("saying yes asks for the niches", buildingIds.includes("niches"))
 check("saying yes asks what goes inside",
@@ -394,21 +384,21 @@ check("saying yes asks what goes inside",
   ))
 check("brand and niches are both required",
   Object.keys(validateSection(
-    SECTIONS[5],
+    sec("snapshots"),
     without(without(answers, "snapshot_brand"), "niches"),
     LANG
   )).length === 2)
 
-const importingIds = visibleQuestions(SECTIONS[5], withSnapshots).map((q) => q.id)
+const importingIds = visibleQuestions(sec("snapshots"), withSnapshots).map((q) => q.id)
 check("importing their own snapshots still asks what goes inside",
   ["pipeline_stages", "calendars", "forms", "automations", "funnels"].every(
     (id) => importingIds.includes(id)
   ))
 check("the contents carry a group heading",
-  Boolean(SECTIONS[5].questions.find((q) => q.id === "pipeline_stages")!.groupTitle))
+  Boolean(sec("snapshots").questions.find((q) => q.id === "pipeline_stages")!.groupTitle))
 
 check("default snapshot hidden before either branch is answered",
-  !visibleQuestions(SECTIONS[5], { has_snapshots: false }).some(
+  !visibleQuestions(sec("snapshots"), { has_snapshots: false }).some(
     (q) => q.id === "default_snapshot"
   ))
 check("default snapshot shown when they have their own",
@@ -424,13 +414,18 @@ for (const id of [
   "wants_mobile_app",
   "fonts",
   "einvoicing_sdi",
+  "stripe_access",
+  "vat_rate",
+  "packages",
+  "prices_include_vat",
+  "rebill_usage",
 ]) {
   check(`“${id}” is gone`, !ALL_QUESTIONS.some((q) => q.id === id))
 }
 check("the pipeline “use yours” escape hatch is gone",
-  !SECTIONS[5].questions.find((q) => q.id === "pipeline_stages")!.optOut)
+  !sec("snapshots").questions.find((q) => q.id === "pipeline_stages")!.optOut)
 check("the automations “use your standard setup” escape hatch is gone",
-  !SECTIONS[5].questions.find((q) => q.id === "automations")!.optOut)
+  !sec("snapshots").questions.find((q) => q.id === "automations")!.optOut)
 
 // ------------------------------------------------- skipping ahead then submitting
 heading("Free navigation, checked once at submit")
@@ -438,16 +433,16 @@ heading("Free navigation, checked once at submit")
 // The client can walk past any step without filling it in; Submit is the only
 // gate, and it has to catch gaps wherever they are.
 const skippedFirst = without(answers, "agency_name")
-check("a gap in step 1 is caught at submit",
-  firstInvalidSection(skippedFirst, LANG) === 0)
+check("a gap in the first step is caught at submit",
+  firstInvalidSection(skippedFirst, LANG) === secIndex("business"))
 
 const skippedMiddle = without(answers, "sender_email")
-check("a gap in step 4 is caught at submit",
-  firstInvalidSection(skippedMiddle, LANG) === 3)
+check("a gap in a middle step is caught at submit",
+  firstInvalidSection(skippedMiddle, LANG) === secIndex("comms"))
 
 const skippedLast = without(answers, "gdpr_consent")
 check("a gap in the final step is caught at submit",
-  firstInvalidSection(skippedLast, LANG) === 6)
+  firstInvalidSection(skippedLast, LANG) === secIndex("team"))
 
 const emptyForm = withDefaults({})
 check("an untouched form is blocked at submit",
@@ -467,15 +462,16 @@ check("whole form validates", Object.keys(validateAll(answers, LANG)).length ===
   JSON.stringify(validateAll(answers, LANG)))
 check("no section is flagged as invalid", firstInvalidSection(answers, LANG) === -1)
 check("a broken answer sends you back to its section",
-  firstInvalidSection({ ...answers, main_domain: "" }, LANG) === 2)
+  firstInvalidSection({ ...answers, main_domain: "" }, LANG) ===
+    secIndex("domain"))
 
 // --------------------------------------------------------------- languages
 heading("Both languages")
 
-check("Italian section title", t(SECTIONS[0].title, "it") === "Dati aziendali")
-check("English section title", t(SECTIONS[0].title, "en") === "Business info")
+check("Italian section title", t(sec("business").title, "it") === "Dati aziendali")
+check("English section title", t(sec("business").title, "en") === "Business info")
 check("English errors come through in English",
-  validateSection(SECTIONS[0], withDefaults({}), "en").agency_name ===
+  validateSection(sec("business"), withDefaults({}), "en").agency_name ===
     "This question is required.")
 
 const everyStringTranslated = SECTIONS.every((s) =>
